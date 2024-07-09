@@ -1,0 +1,3 @@
+*.env
+*ec2-user@ec2-52-14-62-14.us-east-2.compute.amazonaws.com
+*gf-0.1.pem

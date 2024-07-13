@@ -1,10 +1,11 @@
-from flask import Flask, request, Response
+from flask import Flask, request
 from twilio.twiml.messaging_response import MessagingResponse
-from twilio.rest import Client
+from twilio.rest import Client  # Ensure this import is included
 from openai import OpenAI
 import os
 from dotenv import load_dotenv
 import tiktoken
+from datetime import datetime
 
 app = Flask(__name__)
 
@@ -26,33 +27,34 @@ encoding = tiktoken.encoding_for_model("gpt-4")
 accommodations = {
     "1 bedroom, 1 bathroom apartment": {
         "guests": 2,
-        "price": "MXN $1,100 per night",
+        "price": 1100,
         "details": "One-bedroom apartment with AC, bathroom, and mini-bar."
     },
     "2 bedroom, 2 bathroom villa": {
         "guests": 4,
-        "price": "MXN $2,200 per night",
+        "price": 2200,
         "details": "Two-bedroom villa with bathrooms, kitchen, and living area."
     },
     "3 bedroom, 3 bathroom villa": {
         "guests": 6,
-        "price": "MXN $3,300 per night",
+        "price": 3300,
         "details": "Three-bedroom villa with AC, bathrooms, and large living area."
     },
     "6 bedroom, 4 bathroom villa": {
         "guests": 12,
-        "price": "MXN $5,500 per night",
+        "price": 5500,
         "details": "Six-bedroom villa with bathrooms, kitchens, and living areas."
     }
 }
 
-# Store conversation context
+# Store conversation context and reservation details
 conversations = {}
+reservations = {}
 
 def get_accommodation_info(accommodation_name):
     info = accommodations.get(accommodation_name.lower())
     if info:
-        return f"{accommodation_name.title()}:\nGuests: {info['guests']}\nPrice: {info['price']}\nDetails: {info['details']}"
+        return f"{accommodation_name.title()}:\nGuests: {info['guests']}\nPrice: MXN ${info['price']} per night\nDetails: {info['details']}"
     else:
         return "I couldn't find information about that accommodation. Please provide more details or choose from our available options."
 
@@ -95,6 +97,31 @@ def get_restaurant_menu():
         "Pollo a la Parrilla: $129"
     )
 
+def calculate_total_cost(start_date, end_date, price_per_night):
+    start = datetime.strptime(start_date, "%Y-%m-%d")
+    end = datetime.strptime(end_date, "%Y-%m-%d")
+    num_nights = (end - start).days
+    return num_nights * price_per_night
+
+def summarize_reservation(user_number):
+    reservation = reservations.get(user_number, {})
+    if not reservation:
+        return "No reservation details found."
+    
+    total_cost = calculate_total_cost(reservation['start_date'], reservation['end_date'], reservation['price_per_night'])
+    reservation['total_cost'] = total_cost
+    
+    summary = (
+        f"Reservation Summary:\n"
+        f"Name: {reservation.get('name', 'N/A')}\n"
+        f"Number of People: {reservation.get('num_people', 'N/A')}\n"
+        f"Dates: {reservation.get('start_date', 'N/A')} to {reservation.get('end_date', 'N/A')}\n"
+        f"Room Type: {reservation.get('room_type', 'N/A')}\n"
+        f"Price per Night: MXN ${reservation.get('price_per_night', 'N/A')}\n"
+        f"Total Cost: MXN ${reservation.get('total_cost', 'N/A')}"
+    )
+    return summary
+
 @app.route('/whatsapp', methods=['POST'])
 def whatsapp_reply():
     incoming_msg = request.values.get('Body', '').strip().lower()
@@ -105,6 +132,7 @@ def whatsapp_reply():
 
     if user_number not in conversations:
         conversations[user_number] = []
+        reservations[user_number] = {}
 
     conversations[user_number].append({"role": "user", "content": incoming_msg})
 
@@ -113,12 +141,20 @@ def whatsapp_reply():
         if "accommodation" in incoming_msg or "room" in incoming_msg or "villa" in incoming_msg:
             if "1 bedroom" in incoming_msg:
                 response_msg = get_accommodation_info("1 bedroom, 1 bathroom apartment")
+                reservations[user_number]['room_type'] = "1 bedroom, 1 bathroom apartment"
+                reservations[user_number]['price_per_night'] = accommodations["1 bedroom, 1 bathroom apartment"]['price']
             elif "2 bedroom" in incoming_msg:
                 response_msg = get_accommodation_info("2 bedroom, 2 bathroom villa")
+                reservations[user_number]['room_type'] = "2 bedroom, 2 bathroom villa"
+                reservations[user_number]['price_per_night'] = accommodations["2 bedroom, 2 bathroom villa"]['price']
             elif "3 bedroom" in incoming_msg:
                 response_msg = get_accommodation_info("3 bedroom, 3 bathroom villa")
+                reservations[user_number]['room_type'] = "3 bedroom, 3 bathroom villa"
+                reservations[user_number]['price_per_night'] = accommodations["3 bedroom, 3 bathroom villa"]['price']
             elif "6 bedroom" in incoming_msg:
                 response_msg = get_accommodation_info("6 bedroom, 4 bathroom villa")
+                reservations[user_number]['room_type'] = "6 bedroom, 4 bathroom villa"
+                reservations[user_number]['price_per_night'] = accommodations["6 bedroom, 4 bathroom villa"]['price']
             else:
                 response_msg = "Specify the type of accommodation you're interested in. We offer various rooms and villas."
         elif "location" in incoming_msg or "how to get" in incoming_msg:
@@ -131,6 +167,9 @@ def whatsapp_reply():
             response_msg = get_restaurant_menu()
         elif "why coco resort" in incoming_msg or "why choose coco resort" in incoming_msg:
             response_msg = get_why_coco_resort_info()
+        elif "finalize reservation" in incoming_msg or "reservation summary" in incoming_msg:
+            # Finalize the reservation and provide a summary
+            response_msg = summarize_reservation(user_number)
         else:
             # OpenAI API call with conversation history
             messages = [
@@ -147,8 +186,25 @@ def whatsapp_reply():
             response_content = response.choices[0].message.content.strip()
             response_tokens = len(encoding.encode(response_content))
             print(f"Response message tokens: {response_tokens}")
+
             response_msg = response_content
             conversations[user_number].append({"role": "assistant", "content": response_content})
+            
+            # Extract relevant information for the reservation
+            if "name:" in response_content.lower():
+                reservations[user_number]['name'] = response_content.split("name:")[1].strip()
+            if "number of people:" in response_content.lower():
+                reservations[user_number]['num_people'] = int(response_content.split("number of people:")[1].strip())
+            if "dates:" in response_content.lower():
+                dates = response_content.split("dates:")[1].strip().split(" to ")
+                reservations[user_number]['start_date'] = dates[0]
+                reservations[user_number]['end_date'] = dates[1]
+            if "price per night:" in response_content.lower():
+                price_per_night = response_content.split("price per night:")[1].strip()
+                reservations[user_number]['price_per_night'] = int(price_per_night)
+            if "total cost:" in response_content.lower():
+                total_cost = response_content.split("total cost:")[1].strip()
+                reservations[user_number]['total_cost'] = total_cost
     except Exception as e:
         response_msg = f"I'm terribly sorry, but I couldn't process your request. Error: {str(e)}"
 

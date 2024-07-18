@@ -3,4 +3,3 @@ twilio
 python-dotenv
 openai
 tiktoken
-pandas

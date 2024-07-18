@@ -6,7 +6,8 @@ import os
 from dotenv import load_dotenv
 import tiktoken
 from datetime import datetime
-import pandas as pd
+from hotel_sys import Habitacion, Hotel, Reserva, Cliente, SistemaReservas
+from reservation_utils import clean_text, extract_details_from_response, add_reservation
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
@@ -15,84 +16,37 @@ app.secret_key = os.urandom(24)
 load_dotenv()
 
 # Initialize OpenAI client with API key from environment variable
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+openai_api_key = os.getenv("OPENAI_API_KEY")
+if not openai_api_key:
+    raise ValueError("OPENAI_API_KEY is not set in the environment variables")
+client = OpenAI(api_key=openai_api_key)
 
 # Twilio credentials
 account_sid = os.getenv("ACCOUNT_SID")
 auth_token = os.getenv("AUTH_TOKEN")
+if not account_sid or not auth_token:
+    raise ValueError("Twilio ACCOUNT_SID or AUTH_TOKEN is not set in the environment variables")
 twilio_client = Client(account_sid, auth_token)
 
 # Load the tokenizer for the specific model
 encoding = tiktoken.encoding_for_model("gpt-4o")
 
-# Define the path to the CSV file
-today_date = datetime.now().strftime("%Y-%m-%d")
-csv_file_path = f'reservations_{today_date}.csv'
+# Initialize hotel reservation system
+sistema = SistemaReservas()
+hotel = Hotel("Coco Resort", "Uchi, Tablaje Catastral No. 3563, Localidad de, 97430 Yuc., México")
 
-class Reservation:
-    def __init__(self):
-        self.user_number = None
-        self.name = None
-        self.number_of_people = None
-        self.start_date = None
-        self.end_date = None
-        self.room_type = None
-        self.price_per_night = None
-        self.total_cost = None
-    
-    def set_details(self, user_number, name, number_of_people, start_date, end_date, room_type, price_per_night, total_cost):
-        self.user_number = user_number
-        self.name = name
-        self.number_of_people = number_of_people
-        self.start_date = start_date
-        self.end_date = end_date
-        self.room_type = room_type
-        self.price_per_night = price_per_night
-        self.total_cost = total_cost
+# Adding rooms
+habitaciones = [
+    Habitacion(101, "1 Habitación, 1 Baño Apartamento", 1100),
+    Habitacion(102, "2 Habitaciones, 2 Baños Villa", 2200),
+    Habitacion(103, "3 Habitaciones, 3 Baños Villa", 3300),
+    Habitacion(104, "6 Habitaciones, 4 Baños Villa", 5500)
+]
 
-    def get_summary(self):
-        return f"Nombre: {self.name}\nNúmero de Personas: {self.number_of_people}\nFechas: {self.start_date} al {self.end_date}\nTipo de Habitación: {self.room_type}\nPrecio por Noche: {self.price_per_night}\nCosto Total: {self.total_cost}"
+for habitacion in habitaciones:
+    hotel.añadir_habitacion(habitacion)
 
-    def debug_print(self):
-        print(f"Reservation Debug - User Number: {self.user_number}, Name: {self.name}, Number of People: {self.number_of_people}, "
-              f"Start Date: {self.start_date}, End Date: {self.end_date}, Room Type: {self.room_type}, "
-              f"Price per Night: {self.price_per_night}, Total Cost: {self.total_cost}")
-
-# Functions to manage CSV file
-def load_reservations():
-    print(f"Loading reservations from CSV file at path: {csv_file_path}")
-    if os.path.exists(csv_file_path):
-        df = pd.read_csv(csv_file_path)
-        print("Loaded reservations from CSV:")
-        print(df)
-        return df
-    else:
-        print("CSV file does not exist. Creating a new dataframe.")
-        return pd.DataFrame(columns=['user_number', 'name', 'num_people', 'start_date', 'end_date', 'room_type', 'price_per_night', 'total_cost'])
-
-def save_reservations(df):
-    print("Saving reservations to CSV:")
-    print(df)
-    df.to_csv(csv_file_path, index=False)
-    print("Reservations saved successfully.")
-
-def add_reservation(reservation):
-    df = load_reservations()
-    new_reservation = pd.DataFrame([{
-        'user_number': reservation.user_number,
-        'name': reservation.name,
-        'num_people': reservation.number_of_people,
-        'start_date': reservation.start_date,
-        'end_date': reservation.end_date,
-        'room_type': reservation.room_type,
-        'price_per_night': reservation.price_per_night,
-        'total_cost': reservation.total_cost
-    }])
-    df = pd.concat([df, new_reservation], ignore_index=True)
-    save_reservations(df)
-    print("Added new reservation to CSV.")
-
-reservation = Reservation()
+sistema.registrar_hotel(hotel)
 
 @app.route('/whatsapp', methods=['POST'])
 def whatsapp_reply():
@@ -100,14 +54,6 @@ def whatsapp_reply():
     user_number = request.values.get('From', '').strip()
 
     print(f"Incoming message from {user_number}: {incoming_msg}")
-
-    # Set the user number in the reservation object
-    reservation.user_number = user_number
-
-    # Get current date and time
-    now = datetime.now()
-    current_date = now.strftime("%Y-%m-%d")
-    current_time = now.strftime("%H:%M:%S")
 
     # Default message if no response from OpenAI
     response_msg = "Lo siento, no pude entender tu solicitud."
@@ -124,7 +70,7 @@ def whatsapp_reply():
             model="gpt-4o",
             messages=[
                 {"role": "system", "content": f"""
-                Eres un asistente virtual para Coco Resort. Tu trabajo es proporcionar información sobre las opciones de alojamiento, los servicios del resort, la ubicación, el menú del restaurante y hacer reservas para los huéspedes. Sé amable y servicial. La fecha y hora actuales son {current_date} {current_time}.
+                Eres un asistente virtual para Coco Resort. Tu trabajo es proporcionar información sobre las opciones de alojamiento, los servicios del resort, la ubicación, el menú del restaurante y hacer reservas para los huéspedes. Sé amable y servicial. La fecha y hora actuales son {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}.
                 
                 Detalles de Alojamiento:
                 1 Habitación, 1 Baño Apartamento
@@ -198,8 +144,11 @@ def whatsapp_reply():
                 """},
                 *conversation_history
             ],
-            max_tokens=200,
-            temperature=0.7
+            max_tokens=250,  # Adjusted max tokens for more detailed responses
+            temperature=0.7,  # Slightly higher temperature for more natural responses
+            top_p=0.9,  # Higher top_p for more diverse responses
+            frequency_penalty=0.5,  # Frequency penalty to reduce repetition
+            presence_penalty=0.5  # Presence penalty to ensure more new information
         )
 
         # Get response content and count tokens
@@ -214,55 +163,47 @@ def whatsapp_reply():
         session['conversation_history'] = conversation_history
 
         # Extract and set reservation details if available in the response
-        details = {}
-        start_date = None
-        end_date = None
-        if "Nombre" in response_content and "Número de Personas" in response_content:
-            lines = response_content.split('\n')
-            for line in lines:
-                if ":" in line:
-                    key, value = line.split(":", 1)
-                    cleaned_key = key.strip().replace("**", "").replace("*", "").replace("-", "").strip()
-                    cleaned_value = value.strip().replace("**", "").replace("*", "").strip()
-                    details[cleaned_key] = cleaned_value
-            
-            print("Extracted details from response:", details)
-            
-            # Handling the dates more robustly
-            fechas = details.get("Fechas")
-            if fechas:
-                try:
-                    # Split the start and end dates
-                    start_date, end_date = fechas.replace("del", "").replace("de", "").strip().split('al')
-                    start_date = datetime.strptime(start_date.strip(), "%d %m %Y").strftime("%Y-%m-%d")
-                    end_date = datetime.strptime(end_date.strip(), "%d %m %Y").strftime("%Y-%m-%d")
-                except ValueError:
-                    print(f"Error splitting dates: {fechas}")
+        details = extract_details_from_response(response_content)
+        print("Extracted details from response:", details)
 
-            print(f"Setting details in reservation object: {details}")
+        # Handling the dates more robustly
+        fechas = details.get("Fechas")
+        start_date, end_date = None, None
+        if fechas:
+            try:
+                # Split the start and end dates
+                start_date, end_date = [datetime.strptime(date.strip(), "%d de %B de %Y").strftime("%Y-%m-%d") for date in fechas.split('al')]
+            except ValueError:
+                print(f"Error splitting dates: {fechas}")
 
-            reservation.set_details(
+        print(f"Setting details in reservation object: {details}")
+
+        # Create reservation
+        cliente = Cliente(1, details.get("Nombre"), user_number)
+        sistema.registrar_cliente(cliente)
+        habitacion = hotel.buscar_habitacion(tipo=details.get("Tipo de Habitación"))[0]
+        reserva = Reserva(1, habitacion, cliente, start_date, end_date)
+        cliente.realizar_reserva(reserva)
+
+        # Create the response message
+        response_msg = clean_text(response_content)
+
+        # Check for reservation completion and add to CSV
+        if all([cliente.nombre, habitacion.tipo, start_date, end_date]):
+            add_reservation(
                 user_number=user_number,
-                name=details.get("Nombre"),
+                name=cliente.nombre,
                 number_of_people=details.get("Número de Personas"),
                 start_date=start_date,
                 end_date=end_date,
-                room_type=details.get("Tipo de Habitación"),
-                price_per_night=details.get("Precio por Noche"),
+                room_type=habitacion.tipo,
+                price_per_night=habitacion.precio,
                 total_cost=details.get("Costo Total")
             )
-
-            reservation.debug_print()
-
-        response_msg = response_content
-
-        # Check for reservation completion and add to CSV
-        if reservation.name and reservation.number_of_people and reservation.start_date and reservation.end_date and reservation.room_type and reservation.price_per_night and reservation.total_cost:
-            add_reservation(reservation)
-            response_msg += "\nSu reserva ha sido añadida."
+            response_msg += "\n\nSu reserva ha sido añadida."
         else:
             print("Incomplete reservation details:")
-            reservation.debug_print()
+            print(f"Cliente: {cliente.nombre}, Habitacion: {habitacion.tipo}, Start Date: {start_date}, End Date: {end_date}")
 
     except Exception as e:
         response_msg = f"Lo siento, no pude procesar tu solicitud. Error: {str(e)}"

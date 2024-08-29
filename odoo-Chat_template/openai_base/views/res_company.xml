@@ -1,0 +1,16 @@
+<odoo>
+    <record id="view_openai_base_company_form" model="ir.ui.view">
+        <field name="name">res.company.form.inherit.openai</field>
+        <field name="model">res.company</field>
+        <field name="inherit_id" ref="base.view_company_form"/>
+        <field name="arch" type="xml">
+            <group position="inside">
+                <group name="openai" string="OpenAI">
+                    <field name="openai_api_key"/>
+                    <button name="test_openai_connection" type="object" string="Test OpenAI Connection"/>
+                </group>
+            </group>
+        </field>
+    </record>
+</odoo>
+

@@ -7,16 +7,20 @@ import logging
 from datetime import datetime
 import pytz
 from twilio.rest import Client
+from threading import Thread
 
 _logger = logging.getLogger(__name__)
 
 class LangChainHandler:
-    def __init__(self, openai_api_key, twilio_account_sid, twilio_auth_token, twilio_whatsapp_number, model_name="gpt-4o-mini", temperature=0.8, max_tokens=200):
+    def __init__(self, openai_api_key, twilio_account_sid, twilio_auth_token, twilio_whatsapp_number, model_name="gpt-4o-mini", temperature=0.8, max_tokens=200, top_p=1.0, frequency_penalty=0.0, presence_penalty=0.0):
         self.llm = ChatOpenAI(
             openai_api_key=openai_api_key,
             model_name=model_name,
             temperature=temperature,
-            max_tokens=max_tokens
+            max_tokens=max_tokens,
+            top_p=top_p,
+            frequency_penalty=frequency_penalty,
+            presence_penalty=presence_penalty
         )
         self.prompt = ChatPromptTemplate.from_messages([
             ("system", "Eres un asistente virtual para ITS-BS. Tu trabajo es proporcionar información sobre los servicios de consultoría de automatización IT, validar medios de contacto y enviar cotizaciones."),
@@ -59,3 +63,11 @@ class LangChainHandler:
             history = self.conversations[session_id]["history"]
             return history.messages
         return None
+
+    def async_get_response(self, user_input, session_id, callback):
+        def run():
+            response = self.get_response(user_input, session_id)
+            callback(response)
+        
+        thread = Thread(target=run)
+        thread.start()

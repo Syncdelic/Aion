@@ -1,9 +1,9 @@
 from odoo import fields, models, api
 import logging
-from twilio.rest import Client
 from odoo.exceptions import UserError
 from odoo.http import request
-from twilio.twiml.messaging_response import MessagingResponse
+from twilio.rest import Client
+from twilio.twiml.messaging_response import MessagingResponse  # Importar MessagingResponse
 from .langchain_handler import LangChainHandler
 
 _logger = logging.getLogger(__name__)
@@ -12,17 +12,20 @@ class ResCompany(models.Model):
     _inherit = 'res.company'
 
     openai_api_key = fields.Char(string="OpenAI API Key", required=True)
+    twilio_account_sid = fields.Char(string="Twilio Account SID", required=True)
+    twilio_auth_token = fields.Char(string="Twilio Auth Token", required=True)
+    twilio_whatsapp_number = fields.Char(string="Twilio WhatsApp Number", required=True)
     _langchain_handler = None  # Class-level attribute
 
     @classmethod
-    def _get_langchain_handler(cls, openai_api_key):
+    def _get_langchain_handler(cls, openai_api_key, twilio_account_sid, twilio_auth_token, twilio_whatsapp_number):
         if not cls._langchain_handler:
-            cls._langchain_handler = LangChainHandler(openai_api_key)
+            cls._langchain_handler = LangChainHandler(openai_api_key, twilio_account_sid, twilio_auth_token, twilio_whatsapp_number)
         return cls._langchain_handler
 
     def whatsapp_reply(self, incoming_msg, user_number):
         try:
-            langchain_handler = self._get_langchain_handler(self.openai_api_key)
+            langchain_handler = self._get_langchain_handler(self.openai_api_key, self.twilio_account_sid, self.twilio_auth_token, self.twilio_whatsapp_number)
 
             _logger.info(f"Incoming message from {user_number}: {incoming_msg}")
             

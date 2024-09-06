@@ -25,6 +25,13 @@ class LangChainHandler:
         self.prompt = ChatPromptTemplate.from_messages([
             ("system", "Eres un asistente virtual para ITS-BS. Tu trabajo es proporcionar información sobre los servicios de consultoría de automatización IT, validar medios de contacto y enviar cotizaciones."),
             ("system", "La fecha y hora actual es: {datetime}"),
+            ("system", "El número de WhatsApp del cliente es: {user_number}"),
+            ("system", "Asegúrate de preguntar el nombre y apellido del cliente."),
+            ("system", "La consulta ordinaria es de 9am a 5pm."),
+            ("system", "¿Qué versión de Odoo es la ideal para mí? ¿Qué módulos debería utilizar? Si Odoo no cubre mi operación, ¿me podrían ayudar con el levantamiento y revisión de mis necesidades especiales? ¿Me podrían asesorar con mis dudas en el uso del sistema o algún módulo? ¿Pueden implementarme Odoo? ¿Me podrían ayudar con la instalación, configuración y/o actualización del sistema o algún módulo? Si te has hecho una o más de estas preguntas, el servicio de Consultoría IT Admin es para ti."),
+            ("system", "¿Qué cubre el servicio de Consultoría por hora? Desde reuniones para análisis operativos, diagnóstico, recomendaciones y capacitación; hasta entregarte tu sistema implementado en producción."),
+            ("system", "Consultoría ordinaria: $1,000 + IVA por hora. Para solicitudes dentro de horario hábil."),
+            ("system", "Consultoría extraordinaria: $1,500 + IVA por hora. Para solicitudes fuera de horario hábil."),
             ("placeholder", "{chat_history}"),
             ("human", "{input}"),
         ])
@@ -35,7 +42,7 @@ class LangChainHandler:
         self.twilio_client = Client(twilio_account_sid, twilio_auth_token)
         self.twilio_whatsapp_number = twilio_whatsapp_number
 
-    def get_response(self, user_input, session_id):
+    def get_response(self, user_input, session_id, user_number):
         if session_id not in self.conversations:
             history = InMemoryChatMessageHistory()
             self.conversations[session_id] = {
@@ -52,7 +59,7 @@ class LangChainHandler:
         guadalajara_tz = pytz.timezone('America/Mexico_City')
         current_datetime = datetime.now(guadalajara_tz).strftime("%Y-%m-%d %H:%M:%S")
         response = conversation.invoke(
-            {"input": user_input, "datetime": current_datetime},
+                {"input": user_input, "datetime": current_datetime, "user_number": user_number},
             config={"configurable": {"session_id": session_id}}
         )
         _logger.info(f"LangChain response for {session_id}: {response[:50]}...")
@@ -64,9 +71,9 @@ class LangChainHandler:
             return history.messages
         return None
 
-    def async_get_response(self, user_input, session_id, callback):
+    def async_get_response(self, user_input, session_id, user_number, callback):
         def run():
-            response = self.get_response(user_input, session_id)
+            response = self.get_response(user_input, session_id, user_number)
             callback(response)
         
         thread = Thread(target=run)

@@ -29,7 +29,7 @@ class ResCompany(models.Model):
 
             _logger.info(f"Incoming message from {user_number}: {incoming_msg}")
             
-            response_msg = langchain_handler.get_response(incoming_msg, session_id=user_number)
+            response_msg = langchain_handler.get_response(incoming_msg, session_id=user_number, user_number=user_number)
             _logger.info(f"Response content: {response_msg}")
 
             # Log memory content for debugging
